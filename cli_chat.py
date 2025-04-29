@@ -11,7 +11,6 @@ from rich.panel import Panel
 from rich.table import Table
 from rich import box
 import requests
-from rich.layout import Layout
 from rich.panel import Panel
 
 load_dotenv()
@@ -33,11 +32,6 @@ genai.configure(api_key=GOOGLE_API_KEY)
 model = genai.GenerativeModel('gemini-2.0-flash')
 
 console = Console()
-
-EXIT_INTENTS = [
-    "bye", "exit", "end chat", "i want to leave", "goodbye", "quit",
-    "see you", "farewell", "that's all", "i'm done", "stop"
-]
 
 REVIEW_SCHEMA = {
     "type": "object",
@@ -69,32 +63,60 @@ def simulate_typing(text):
         time.sleep(0.02)
     console.print()
 
+def analyze_exit_intent(message):
+    prompt = f"""
+    Analyze if the following message indicates an intent to end a conversation.
+    Consider various ways people might express wanting to end a chat, including:
+    - Direct statements about leaving/ending
+    - Farewells and goodbyes
+    - Expressions of completion
+    - Indirect hints about wrapping up
+    
+    Message: "{message}"
+    
+    Respond with ONLY "yes" if the message indicates an intent to end the conversation,
+    or "no" if it does not.
+    """
+    
+    try:
+        response = model.generate_content(prompt)
+        return response.text.strip().lower() == "yes"
+    except Exception as e:
+        console.print(f"[red]Error analyzing exit intent: {str(e)}[/red]")
+        return False
+
 def is_exit_intent(message):
-    return any(re.search(rf"\b{intent}\b", message.lower()) for intent in EXIT_INTENTS)
+    return analyze_exit_intent(message)
 
 def collect_feedback():
     console.print("\n[bold yellow]We'd love to hear your feedback![/bold yellow]")
     
     while True:
-        rating_input = Prompt.ask("Please rate your experience (1-5)")
-        try:
-            rating = int(rating_input)
-            if 1 <= rating <= 5:
-                break
-            else:
-                console.print("[red]Rating must be between 1 and 5. Please try again.[/red]")
-        except ValueError:
-            console.print("[red]Please enter a valid number between 1 and 5[/red]")
-    
-    while True:
-        review = Prompt.ask("Please provide your review for the developer (this is required)")
+        review = Prompt.ask("Please share your thoughts about the chat experience")
         if review.strip():
             if len(review) < 10:
-                console.print("[red]Review must be at least 10 characters long. Please provide more details.[/red]")
+                console.print("[red]Please provide more detailed feedback (at least 10 characters)[/red]")
             else:
                 break
         else:
-            console.print("[red]Review cannot be empty. Please provide your feedback.[/red]")
+            console.print("[red]Feedback cannot be empty. Please share your thoughts.[/red]")
+    
+    rating_prompt = f"""
+    Analyze the following user feedback and determine an appropriate rating from 1 to 5.
+    Consider the sentiment, tone, and content of the feedback.
+    Respond with ONLY a single number between 1 and 5.
+    
+    Feedback: "{review}"
+    """
+    
+    try:
+        response = model.generate_content(rating_prompt)
+        rating = int(response.text.strip())
+        rating = max(1, min(5, rating))
+        # console.print(f"[green]Based on your feedback, we've assigned a rating of {rating}/5[/green]")
+    except Exception as e:
+        console.print(f"[red]Error generating rating: {str(e)}[/red]")
+        rating = 3 
     
     return {"review": review, "rating": rating}
 
@@ -175,7 +197,7 @@ def save_chat_history(chat_history):
 def display_session(session):
     console.print("\n" + "=" * 80)
     console.print(Panel.fit(
-        f"[bold cyan]Session Details[/bold cyan]\n"
+        "[bold cyan]Session Details[/bold cyan]\n"
         f"Session ID: [yellow]{session['id']}[/yellow]\n"
         f"Start Time: [yellow]{session['start_time']}[/yellow]\n"
         f"Duration: [yellow]{session['duration']}[/yellow] seconds",
